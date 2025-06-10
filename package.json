@@ -1,0 +1,27 @@
+{
+  "name": "pm2-reload",
+  "version": "1.0.0",
+  "description": "'pm2 reload' fixed",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pinkasey/pm2-reload.git"
+  },
+  "keywords": [
+    "pm2"
+  ],
+  "author": "Eyal Pinkas",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/pinkasey/pm2-reload/issues"
+  },
+  "homepage": "https://github.com/pinkasey/pm2-reload#readme",
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "@types/node": "^22.15.18",
+    "prettier": "3.5.3"
+  }
+}
