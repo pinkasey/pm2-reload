@@ -16,11 +16,15 @@ program
   })
   .option('-s, --silent', 'Silent mode')
   .option('-v, --verbose', 'Enable verbose logging')
+  .option('-m, --ready-message <string>', 'Wait for this message in stdout after restart')
+  .option('-t, --process-timout <number>', 'How log to wait for a process to reload, in seconds', parseInt, 120)
   .helpOption('-h, --help', 'Display help for command')
   .parse(process.argv);
 
 const APP_NAME = args.appName;
 const options: CliOptions = program.opts();
+const READY_MESSAGE = options.readyMessage;
+const PROCESS_TIMEOUT = options.processTimout * 1000; // Convert seconds to milliseconds
 
 const logger = new Logger(options);
 
@@ -38,13 +42,22 @@ function pm2List(): Promise<ProcessDescription[]> {
 
 function pm2Restart(id: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    pm2.restart(id, (err) => (err ? reject(err) : resolve()));
-  });
-}
+    let completed = false;
+    const timer = setTimeout(() => {
+      if (completed) return; // Already resolved
+      reject(new Error(`Timeout waiting for process ${id} to restart`));
+    }, PROCESS_TIMEOUT);
 
-function pm2Reload(name: string, opts: object): Promise<void> {
-  return new Promise((resolve, reject) => {
-    pm2.reload(name, opts, (err) => (err ? reject(err) : resolve()));
+    pm2.restart(id, (err) => {
+      clearTimeout(timer);
+      completed = true;
+      if (err) {
+        reject(err);
+      } else {
+        completed = true;
+        resolve();
+      }
+    });
   });
 }
 
@@ -52,38 +65,87 @@ function pm2Disconnect() {
   pm2.disconnect();
 }
 
+function waitForReadyMessage(pm_id: number, readyMessage: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    pm2.launchBus((err, bus) => {
+      if (err) return reject(err);
+      let completed = false;
+
+      const timer = setTimeout(() => {
+        if (completed) return; // Already resolved
+        cleanup();
+        reject(new Error(`Timeout waiting for ready message on pm_id ${pm_id}`));
+      }, PROCESS_TIMEOUT);
+
+      const onLog = (packet: any) => {
+        if (
+          // prettier-ignore
+          packet.process 
+          && packet.process.pm_id === pm_id
+          && typeof packet.data === 'string'
+          && packet.data.includes(readyMessage)
+        ) {
+          completed = true;
+          cleanup();
+          resolve();
+        }
+      };
+
+      function cleanup() {
+        clearTimeout(timer);
+        bus.off('log:out', onLog);
+        bus.off('process:msg', onLog);
+        bus.close();
+      }
+
+      bus.on('log:out', onLog);
+      // Optionally listen to 'process:msg' if your app uses process.send
+      // bus.on('process:msg', onLog);
+    });
+  });
+}
+
 (async () => {
   try {
     await pm2Connect();
 
     const processList = await pm2List();
-    const firstProcess = processList.find((p) => p.name === APP_NAME);
-    logger.info(`reloading ${APP_NAME}... `);
+    const appProcesses = processList.filter((p) => p.name === APP_NAME);
 
-    if (!firstProcess) {
+    if (appProcesses.length === 0) {
       logger.error(`Error: Could not find a process named ${APP_NAME}. Is the app running?`);
       process.exit(1);
     }
 
-    const firstId = firstProcess.pm_id as number;
-    logger.debug(`Found first instance with ID ${firstId}. Restarting it...`);
+    logger.info(`Reloading ${APP_NAME} (${appProcesses.length} instance(s))...`);
 
-    await pm2Restart(firstId);
+    // Restart each instance one by one, waiting for ready message if needed
+    for (const proc of appProcesses) {
+      const pm_id = proc.pm_id as number;
+      logger.info(`Restarting instance with ID ${pm_id}...`);
 
-    logger.debug(`Instance ${firstId} successfully restarted. Checking status...`);
-
-    const updatedList = await pm2List();
-    const updatedProcess = updatedList.find((p) => p.name === APP_NAME);
-    const status = updatedProcess?.pm2_env?.status;
-
-    if (status !== 'online') {
-      logger.error(`Instance ${firstId} failed to restart successfully. Status: ${status}. Aborting reload.`);
-      process.exit(1);
+      if (READY_MESSAGE) {
+        logger.debug(`Waiting for ready message on instance ${pm_id}...`);
+        const readyPromise = waitForReadyMessage(pm_id, READY_MESSAGE);
+        const restartPromise = pm2Restart(pm_id);
+        await Promise.all([readyPromise, restartPromise]);
+        logger.debug(`Ready message received for instance ${pm_id}.`);
+      } else {
+        await pm2Restart(pm_id);
+        let status = '';
+        for (let i = 0; i < 30; i++) {
+          const updatedList = await pm2List();
+          const updatedProc = updatedList.find((p) => p.pm_id === pm_id);
+          status = updatedProc?.pm2_env?.status || '';
+          if (status === 'online') break;
+          await new Promise((res) => setTimeout(res, 1000));
+        }
+        if (status !== 'online') {
+          logger.error(`Instance ${pm_id} failed to restart successfully. Status: ${status}. Aborting reload.`);
+          process.exit(1);
+        }
+      }
     }
-
-    logger.debug(`Instance ${firstId} is online. Proceeding to reload ${APP_NAME}...`);
-
-    await pm2Reload(APP_NAME, { updateEnv: true });
 
     logger.info(`${APP_NAME} reloaded successfully.`);
   } catch (err) {
