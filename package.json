@@ -1,10 +1,14 @@
 {
   "name": "pm2-reload",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "'pm2 reload' fixed",
   "main": "/dist/pm2-reload.js",
+  "bin": {
+    "pm2-reload": "bin/pm2-reload"
+  },
   "files": [
     "dist",
+    "bin",
     "README.md"
   ],
   "scripts": {
