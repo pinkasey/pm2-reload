@@ -1,5 +1,6 @@
 import pm2, { ProcessDescription } from 'pm2';
 import { Command } from 'commander';
+import { Logger } from './logger';
 
 const program = new Command();
 
@@ -19,7 +20,9 @@ program
   .parse(process.argv);
 
 const APP_NAME = args.appName;
-const options = program.opts();
+const options: CliOptions = program.opts();
+
+const logger = new Logger(options);
 
 function pm2Connect(): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -55,41 +58,36 @@ function pm2Disconnect() {
 
     const processList = await pm2List();
     const firstProcess = processList.find((p) => p.name === APP_NAME);
+    logger.info(`reloading ${APP_NAME}... `);
 
     if (!firstProcess) {
-      console.error(`Error: Could not find a process named ${APP_NAME}. Is the app running?`);
+      logger.error(`Error: Could not find a process named ${APP_NAME}. Is the app running?`);
       process.exit(1);
     }
 
     const firstId = firstProcess.pm_id as number;
-    if (options.verbose) {
-      console.log(`Found first instance with ID ${firstId}. Restarting it...`);
-    }
+    logger.debug(`Found first instance with ID ${firstId}. Restarting it...`);
 
     await pm2Restart(firstId);
 
-    if (options.verbose) {
-      console.log(`Instance ${firstId} successfully restarted. Checking status...`);
-    }
+    logger.debug(`Instance ${firstId} successfully restarted. Checking status...`);
 
     const updatedList = await pm2List();
     const updatedProcess = updatedList.find((p) => p.name === APP_NAME);
     const status = updatedProcess?.pm2_env?.status;
 
     if (status !== 'online') {
-      console.error(`Instance ${firstId} failed to restart successfully. Status: ${status}. Aborting reload.`);
+      logger.error(`Instance ${firstId} failed to restart successfully. Status: ${status}. Aborting reload.`);
       process.exit(1);
     }
 
-    if (options.verbose) {
-      console.log(`Instance ${firstId} is online. Proceeding to reload ${APP_NAME}...`);
-    }
+    logger.debug(`Instance ${firstId} is online. Proceeding to reload ${APP_NAME}...`);
 
     await pm2Reload(APP_NAME, { updateEnv: true });
 
-    console.log(`${APP_NAME} reloaded successfully.`);
+    logger.info(`${APP_NAME} reloaded successfully.`);
   } catch (err) {
-    console.error(err instanceof Error ? err.message : err);
+    logger.error(err instanceof Error ? err.message : err);
     process.exit(1);
   } finally {
     pm2Disconnect();
