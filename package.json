@@ -2,8 +2,9 @@
   "name": "pm2-reload",
   "version": "1.0.0",
   "description": "'pm2 reload' fixed",
-  "main": "index.js",
+  "main": "/dist/pm2-reload.js",
   "scripts": {
+    "build": "tsc --project tsconfig.json",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -19,9 +20,12 @@
     "url": "https://github.com/pinkasey/pm2-reload/issues"
   },
   "homepage": "https://github.com/pinkasey/pm2-reload#readme",
+  "dependencies": {
+    "pm2": "^6.0.8"
+  },
   "devDependencies": {
-    "typescript": "^5.8.3",
     "@types/node": "^22.15.18",
-    "prettier": "3.5.3"
+    "prettier": "3.5.3",
+    "typescript": "^5.8.3"
   }
 }
