@@ -17,13 +17,24 @@ program
   .option('-s, --silent', 'Silent mode')
   .option('-v, --verbose', 'Enable verbose logging')
   .option('-m, --ready-message <string>', 'Wait for this message in stdout after restart')
-  .option('-t, --process-timout <number>', 'How log to wait for a process to reload, in seconds', parseInt, 120)
+  .option(
+    '-f, --fail-messages <string>',
+    'If this message appears in stdout after restart, fail immediately. Can be specified multiple times.',
+    (value, previous) => {
+      const newValue = previous || [];
+      newValue.push(value);
+      return newValue;
+    },
+    [] as string[]
+  )
+  .option('-t, --process-timout <number>', 'How long to wait for a process to reload, in seconds', parseInt, 120)
   .helpOption('-h, --help', 'Display help for command')
   .parse(process.argv);
 
 const APP_NAME = args.appName;
 const options: CliOptions = program.opts();
 const READY_MESSAGE = options.readyMessage;
+const FAIL_MESSAGES = options.failMessages;
 const PROCESS_TIMEOUT = options.processTimout * 1000; // Convert seconds to milliseconds
 
 const logger = new Logger(options);
@@ -65,29 +76,38 @@ function pm2Disconnect() {
   pm2.disconnect();
 }
 
-function waitForReadyMessage(pm_id: number, readyMessage: string): Promise<void> {
+function waitForReadyMessage(pm_id: number, readyMessage: string, failMessages?: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     pm2.launchBus((err, bus) => {
       if (err) return reject(err);
       let completed = false;
 
       const timer = setTimeout(() => {
-        if (completed) return; // Already resolved
+        if (completed) return;
         cleanup();
         reject(new Error(`Timeout waiting for ready message on pm_id ${pm_id}`));
       }, PROCESS_TIMEOUT);
 
       const onLog = (packet: any) => {
+        // prettier-ignore
         if (
-          // prettier-ignore
-          packet.process 
-          && packet.process.pm_id === pm_id
-          && typeof packet.data === 'string'
-          && packet.data.includes(readyMessage)
+          packet.process &&
+          packet.process.pm_id === pm_id &&
+          typeof packet.data === 'string'
         ) {
-          completed = true;
-          cleanup();
-          resolve();
+          if (readyMessage && packet.data.includes(readyMessage)) {
+            completed = true;
+            cleanup();
+            resolve();
+          }
+          
+          for (const failMessage of failMessages || []) {
+              if (packet.data.includes(failMessage)) {
+                completed = true;
+                cleanup();
+                reject(new Error(`Fail message detected on pm_id ${pm_id}:\n "${packet.data}"`));
+              }
+          } 
         }
       };
 
@@ -97,6 +117,9 @@ function waitForReadyMessage(pm_id: number, readyMessage: string): Promise<void>
         bus.off('process:msg', onLog);
         bus.close();
       }
+
+      logger.debug(`Waiting for ready message "${readyMessage}" on pm_id ${pm_id}...`);
+      logger.debug(`Or to one of the fail-messages: \n\t${failMessages?.join('\n\t')}\n...`);
 
       bus.on('log:out', onLog);
       // Optionally listen to 'process:msg' if your app uses process.send
@@ -126,7 +149,7 @@ function waitForReadyMessage(pm_id: number, readyMessage: string): Promise<void>
 
       if (READY_MESSAGE) {
         logger.debug(`Waiting for ready message on instance ${pm_id}...`);
-        const readyPromise = waitForReadyMessage(pm_id, READY_MESSAGE);
+        const readyPromise = waitForReadyMessage(pm_id, READY_MESSAGE, FAIL_MESSAGES);
         const restartPromise = pm2Restart(pm_id);
         await Promise.all([readyPromise, restartPromise]);
         logger.debug(`Ready message received for instance ${pm_id}.`);
