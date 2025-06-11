@@ -1,6 +1,25 @@
 import pm2, { ProcessDescription } from 'pm2';
+import { Command } from 'commander';
 
-const APP_NAME = 'strapi';
+const program = new Command();
+
+const args = {
+  appName: '',
+};
+
+program
+  .name('pm2-reload')
+  .description('Restart and reload a PM2 process safely')
+  .argument('<appName>', 'Name of the PM2 app to reload', (name) => {
+    args.appName = name;
+  })
+  .option('-s, --silent', 'Silent mode')
+  .option('-v, --verbose', 'Enable verbose logging')
+  .helpOption('-h, --help', 'Display help for command')
+  .parse(process.argv);
+
+const APP_NAME = args.appName;
+const options = program.opts();
 
 function pm2Connect(): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -43,11 +62,15 @@ function pm2Disconnect() {
     }
 
     const firstId = firstProcess.pm_id as number;
-    console.log(`Found first instance with ID ${firstId}. Restarting it...`);
+    if (options.verbose) {
+      console.log(`Found first instance with ID ${firstId}. Restarting it...`);
+    }
 
     await pm2Restart(firstId);
 
-    console.log(`Instance ${firstId} successfully restarted. Checking status...`);
+    if (options.verbose) {
+      console.log(`Instance ${firstId} successfully restarted. Checking status...`);
+    }
 
     const updatedList = await pm2List();
     const updatedProcess = updatedList.find((p) => p.name === APP_NAME);
@@ -58,7 +81,9 @@ function pm2Disconnect() {
       process.exit(1);
     }
 
-    console.log(`Instance ${firstId} is online. Proceeding to reload ${APP_NAME}...`);
+    if (options.verbose) {
+      console.log(`Instance ${firstId} is online. Proceeding to reload ${APP_NAME}...`);
+    }
 
     await pm2Reload(APP_NAME, { updateEnv: true });
 
