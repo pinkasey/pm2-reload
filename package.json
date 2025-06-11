@@ -1,11 +1,16 @@
 {
   "name": "pm2-reload",
-  "version": "1.0.0",
+  "version": "1.0.0-alpha.1",
   "description": "'pm2 reload' fixed",
   "main": "/dist/pm2-reload.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "prepublishOnly": "npm run build"
   },
   "repository": {
     "type": "git",
@@ -21,7 +26,7 @@
   },
   "homepage": "https://github.com/pinkasey/pm2-reload#readme",
   "dependencies": {
-    "pm2": "^6.0.8"
+    "pm2": "^6.x.x"
   },
   "devDependencies": {
     "@types/node": "^22.15.18",
