@@ -18,7 +18,7 @@ program
   .option('-v, --verbose', 'Enable verbose logging')
   .option('-m, --ready-message <string>', 'Wait for this message in stdout after restart')
   .option(
-    '-f, --fail-messages <string>',
+    '-f, --fail-message <string>',
     'If this message appears in stdout after restart, fail immediately. Can be specified multiple times.',
     (value, previous) => {
       const newValue = previous || [];
@@ -34,7 +34,7 @@ program
 const APP_NAME = args.appName;
 const options: CliOptions = program.opts();
 const READY_MESSAGE = options.readyMessage;
-const FAIL_MESSAGES = options.failMessages;
+const FAIL_MESSAGES = options.failMessage;
 const PROCESS_TIMEOUT = options.processTimout * 1000; // Convert seconds to milliseconds
 
 const logger = new Logger(options);
