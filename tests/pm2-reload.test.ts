@@ -1,29 +1,48 @@
 import { exec, spawn } from 'child_process';
 import path from 'path';
 import util from 'util';
+const { APP_READY_MESSAGE } = require('./test-consts');
 
-jest.setTimeout(30000);
+jest.setTimeout(40000);
 
 const execAsync = util.promisify(exec);
 const appPath = path.resolve(__dirname, 'test-app.js');
-const appName = 'test-app';
+
+const appNamePrefix = 'test-app-';
+const generateAppName = () => {
+  return `${appNamePrefix}${Math.random().toString(36).substring(2, 15)}`;
+};
+
+const startTestApp = async (appName: string = generateAppName()) => {
+  const { stdout, stderr } = await execAsync(`npx pm2 start ${appPath} --name ${appName} -i 2 --no-autorestart`);
+  if (stdout) process.stdout.write(`[pm2 start stdout] ${stdout}`);
+  if (stderr) process.stderr.write(`[pm2 start stderr] ${stderr}`);
+  return appName;
+};
+
+// Helper to delete only test processes
+const deleteTestProcesses = async () => {
+  const { stdout } = await execAsync(`npx pm2 jlist`);
+  const list = JSON.parse(stdout);
+  const testApps = list.filter((proc: any) => proc.name && proc.name.startsWith(appNamePrefix));
+  const testAppNames = [...new Set(testApps.map((proc: any) => proc.name))];
+  console.log('Deleting test PM2 processes:', testAppNames.join(', '));
+  for (const appName of testAppNames) {
+    await execAsync(`npx pm2 delete ${appName}`);
+  }
+  console.log('All test PM2 processes deleted.');
+};
 
 describe('PM2 Reload Functionality', () => {
-  beforeAll(async () => {
-    console.log('beforeAll: starting PM2 with test app');
-    const { stdout, stderr } = await execAsync(`npx pm2 start ${appPath} --name ${appName} -i 2 --no-autorestart`);
-    if (stdout) process.stdout.write(`[pm2 start stdout] ${stdout}`);
-    if (stderr) process.stderr.write(`[pm2 start stderr] ${stderr}`);
-  });
-
   afterAll(async () => {
-    const { stderr } = await execAsync(`pm2 delete ${appName}`);
-    if (stderr) console.error('afterAll stderr:', stderr);
+    await deleteTestProcesses();
+    console.log('Test PM2 processes deleted.');
   });
 
   test('should reload the application successfully', async () => {
     console.log('starting test');
     try {
+      const appName = await startTestApp();
       const { stdout, stderr } = await execAsync(`node ./dist/pm2-reload.js ${appName}`);
       console.log('executed pm2-reload.js');
       if (stderr) console.error('Test stderr:', stderr);
@@ -35,4 +54,35 @@ describe('PM2 Reload Functionality', () => {
       throw error;
     }
   });
+
+  test('should handle non-existent app gracefully', async () => {
+    try {
+      await execAsync(`node ./dist/pm2-reload.js non-existent-app`);
+    } catch (error: any) {
+      expect(error.stderr).toContain('Error: Could not find a process named non-existent-app');
+    }
+  });
+
+  test('should handle ready message on reload', async () => {
+    const failMessages = ['FAIL', 'ERROR'];
+
+    const appName = await startTestApp();
+    const failMessageFlags = failMessages.map((f) => `--fail-message "${f}"`).join(' ');
+    console.log(`reloading app ${appName} with ready message:`, APP_READY_MESSAGE);
+    const { stdout, stderr } = await execAsync(`node ./dist/pm2-reload.js ${appName} --verbose --ready-message "${APP_READY_MESSAGE}"`);
+    console.log(`reloaded app ${appName} with ready message:`, APP_READY_MESSAGE);
+    if (stderr) console.error('Test stderr:', stderr);
+    expectEmptyStdError(stderr);
+    expect(stdout).toContain('Reloading');
+    expect(stdout).toContain('Ready message received for instance');
+    expect(stdout).toContain(`${appName} reloaded successfully.`);
+  });
 });
+function expectEmptyStdError(stderr: string) {
+  const cleanStdErr = stderr
+    .replace(/Debugger attached./g, '')
+    .replace(/Waiting for the debugger to disconnect.../g, '')
+    .replace(/\n/g, '')
+    .replace(/\s/g, '');
+  expect(cleanStdErr).toBe('');
+}

@@ -1,4 +1,4 @@
-const APP_READY_MESSAGE = 'App is ready';
+const { APP_READY_MESSAGE } = require("./test-consts");
 
 const args = process.argv.slice(2);
 let sleep = 0;
