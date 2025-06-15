@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "test": "npx jest",
+    "test": "npx jest --detectOpenHandles",
     "prepublishOnly": "npm run build"
   },
   "repository": {

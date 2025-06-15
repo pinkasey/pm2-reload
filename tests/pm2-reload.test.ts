@@ -1,11 +1,12 @@
-import { exec, spawn } from 'child_process';
+import { pm2Reload } from '../src/pm2-reload';
+import { CliOptions } from '../src/types';
+import { pm2StartAsync, pm2ListAsync, pm2DeleteAsync, pm2LaunchBusAsync, pm2DisconnectAsync } from '../src/pm2Promisified';
 import path from 'path';
-import util from 'util';
-const { APP_READY_MESSAGE } = require('./test-consts');
+import { PM2BusListener } from '../src/pm2BusListener';
+const { APP_READY_MESSAGE, APP_ERROR_MESSAGE } = require('./test-consts');
 
-jest.setTimeout(40000);
+jest.setTimeout(10000);
 
-const execAsync = util.promisify(exec);
 const appPath = path.resolve(__dirname, 'test-app.js');
 
 const appNamePrefix = 'test-app-';
@@ -14,75 +15,103 @@ const generateAppName = () => {
 };
 
 const startTestApp = async (appName: string = generateAppName()) => {
-  const { stdout, stderr } = await execAsync(`npx pm2 start ${appPath} --name ${appName} -i 2 --no-autorestart`);
-  if (stdout) process.stdout.write(`[pm2 start stdout] ${stdout}`);
-  if (stderr) process.stderr.write(`[pm2 start stderr] ${stderr}`);
+  await pm2StartAsync(appPath, {
+    script: appPath,
+    name: appName,
+    instances: 2, // Start with 2 instances
+    autorestart: false, // Disable autorestart for testing
+    args: [],
+    exec_mode: 'cluster', // Use cluster mode for multiple instances
+  });
   return appName;
 };
 
 // Helper to delete only test processes
 const deleteTestProcesses = async () => {
-  const { stdout } = await execAsync(`npx pm2 jlist`);
-  const list = JSON.parse(stdout);
+  const list = await pm2ListAsync();
+
   const testApps = list.filter((proc: any) => proc.name && proc.name.startsWith(appNamePrefix));
   const testAppNames = [...new Set(testApps.map((proc: any) => proc.name))];
   console.log('Deleting test PM2 processes:', testAppNames.join(', '));
   for (const appName of testAppNames) {
-    await execAsync(`npx pm2 delete ${appName}`);
+    await pm2DeleteAsync(appName);
   }
   console.log('All test PM2 processes deleted.');
 };
 
+const pm2ReloadOptions: CliOptions = {
+  silent: false,
+  verbose: true,
+  readyMessage: APP_READY_MESSAGE,
+  failMessage: [APP_ERROR_MESSAGE],
+  processTimeout: 2000,
+};
+
+async function pm2ReloadForTest(appName: string, options: CliOptions = pm2ReloadOptions): Promise<void> {
+  return await pm2Reload(appName, options, false);
+}
+
 describe('PM2 Reload Functionality', () => {
+  let bus: any;
+
+  beforeAll(async () => {
+    console.log('beforeAll...');
+    // await pm2ConnectAsync();
+    bus = await pm2LaunchBusAsync();
+    console.log('beforeAll... connected.');
+  });
+
   afterAll(async () => {
+    console.log('afterAll...');
     await deleteTestProcesses();
-    console.log('Test PM2 processes deleted.');
+    if (bus) bus.close();
+    await pm2DisconnectAsync();
+    console.log('afterAll... completed.');
   });
 
   test('should reload the application successfully', async () => {
     console.log('starting test');
-    try {
-      const appName = await startTestApp();
-      const { stdout, stderr } = await execAsync(`node ./dist/pm2-reload.js ${appName}`);
-      console.log('executed pm2-reload.js');
-      if (stderr) console.error('Test stderr:', stderr);
-      expect(stderr).toBe('');
-      expect(stdout).toContain('Reloading');
-    } catch (error: any) {
-      if (error.stdout) console.log('stdout:', error.stdout);
-      if (error.stderr) console.error('stderr:', error.stderr);
-      throw error;
-    }
+    let pm2Listener: PM2BusListener = null as any;
+    const appName = await startTestApp();
+    pm2Listener = new PM2BusListener(bus, appName);
+    pm2Listener.startListening();
+    await pm2ReloadForTest(appName);
+    console.log('executed pm2-reload.js');
+
+    expect(pm2Listener.hasMessage(APP_READY_MESSAGE)).toBe(true);
+    expect(pm2Listener.getErrors()).toHaveLength(0);
   });
 
   test('should handle non-existent app gracefully', async () => {
+    const nonExistentApp = 'non-existent-app';
     try {
-      await execAsync(`node ./dist/pm2-reload.js non-existent-app`);
+      await pm2ReloadForTest(nonExistentApp);
+      expect(true).toBe(false); // Should not reach here
     } catch (error: any) {
-      expect(error.stderr).toContain('Error: Could not find a process named non-existent-app');
+      expect(error.message).toContain('Error: Could not find a process named ' + nonExistentApp);
     }
   });
 
   test('should handle ready message on reload', async () => {
     const failMessages = ['FAIL', 'ERROR'];
 
-    const appName = await startTestApp();
-    const failMessageFlags = failMessages.map((f) => `--fail-message "${f}"`).join(' ');
+    const appName = generateAppName();
+    const pm2Listener = new PM2BusListener(bus, appName);
+    pm2Listener.startListening();
+    await startTestApp(appName);
     console.log(`reloading app ${appName} with ready message:`, APP_READY_MESSAGE);
-    const { stdout, stderr } = await execAsync(`node ./dist/pm2-reload.js ${appName} --verbose --ready-message "${APP_READY_MESSAGE}"`);
+
+    await pm2ReloadForTest(appName, {
+      ...pm2ReloadOptions,
+      readyMessage: APP_READY_MESSAGE,
+      failMessage: failMessages,
+    });
+
     console.log(`reloaded app ${appName} with ready message:`, APP_READY_MESSAGE);
-    if (stderr) console.error('Test stderr:', stderr);
-    expectEmptyStdError(stderr);
-    expect(stdout).toContain('Reloading');
-    expect(stdout).toContain('Ready message received for instance');
-    expect(stdout).toContain(`${appName} reloaded successfully.`);
+    const messages = pm2Listener.getMessages();
+    expect(pm2Listener.getErrors()).toHaveLength(0);
+    expect(messages).toContain('App Started with args []');
+    expect(messages).toContain(APP_READY_MESSAGE);
+    expect(messages.filter((msg) => msg.includes(APP_READY_MESSAGE))).toHaveLength(4);
   });
 });
-function expectEmptyStdError(stderr: string) {
-  const cleanStdErr = stderr
-    .replace(/Debugger attached./g, '')
-    .replace(/Waiting for the debugger to disconnect.../g, '')
-    .replace(/\n/g, '')
-    .replace(/\s/g, '');
-  expect(cleanStdErr).toBe('');
-}
