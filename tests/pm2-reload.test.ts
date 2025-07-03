@@ -13,8 +13,20 @@ const generateAppName = () => {
   return `${appNamePrefix}${Math.random().toString(36).substring(2, 15)}`;
 };
 
-const startTestApp = async (appName: string = generateAppName()) => {
-  const { stdout, stderr } = await execAsync(`npx pm2 start ${appPath} --name ${appName} -i 2 --no-autorestart`);
+const startTestApp = async (
+  args: {
+    appName?: string;
+    sleep?: number;
+  } = {}
+) => {
+  const appName = args.appName || generateAppName();
+  const sleep = args.sleep || 0;
+
+  let command = `npx pm2 start ${appPath} --name ${appName} -i 2 --no-autorestart`;
+  if (sleep > 0) {
+    command += ` -- --sleep ${sleep}`;
+  }
+  const { stdout, stderr } = await execAsync(command);
   if (stdout) process.stdout.write(`[pm2 start stdout] ${stdout}`);
   if (stderr) process.stderr.write(`[pm2 start stderr] ${stderr}`);
   return appName;
@@ -76,6 +88,22 @@ describe('PM2 Reload Functionality', () => {
     expect(stdout).toContain('Reloading');
     expect(stdout).toContain('Ready message received for instance');
     expect(stdout).toContain(`${appName} reloaded successfully.`);
+  });
+
+  test('should exit on timeout if ready message is not received', async () => {
+    const appName = await startTestApp({ sleep: 10 * 1000 });
+    const timeout = 2; // seconds
+    try {
+      await execAsync(`node ./dist/pm2-reload.js ${appName} --ready-message "${APP_READY_MESSAGE}" --process-timeout ${timeout}`);
+    } catch (error: any) {
+      expect(error.stderr).toContain(`Timeout waiting for ready message`);
+    }
+  });
+
+  test('should start normally if timeout is specified, but not reached', async () => {
+    const appName = await startTestApp({ sleep: 0 });
+    const timeout = 2; // seconds
+    await execAsync(`node ./dist/pm2-reload.js ${appName} --ready-message "${APP_READY_MESSAGE}" --process-timeout ${timeout}`);
   });
 });
 function expectEmptyStdError(stderr: string) {

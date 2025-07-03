@@ -1,20 +1,19 @@
 const { APP_READY_MESSAGE } = require("./test-consts");
+const { Command } = require("commander");
 
-const args = process.argv.slice(2);
-let sleep = 0;
-let fail = false;
+const program = new Command();
 
-for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--sleep' && args[i + 1]) {
-    sleep = parseInt(args[i + 1], 10) || 0;
-    i++;
-  }
-  if (args[i] === '--fail') {
-    fail = true;
-  }
-}
+program
+  .option('--sleep <ms>', 'Sleep time in milliseconds before starting', '0')
+  .option('--fail', 'Exit with error after sleep');
 
-console.log('App Started with args', args);
+program.parse(process.argv);
+
+const options = program.opts();
+const sleep = parseInt(options.sleep, 10) || 0;
+const fail = !!options.fail;
+
+console.log('App Started with args', process.argv.slice(2));
 
 setTimeout(() => {
   if (fail) {

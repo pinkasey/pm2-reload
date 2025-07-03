@@ -1,6 +1,7 @@
 import pm2, { ProcessDescription } from 'pm2';
 import { Command } from 'commander';
 import { Logger } from './logger';
+import { exit } from 'process';
 
 const program = new Command();
 
@@ -27,7 +28,7 @@ program
     },
     [] as string[]
   )
-  .option('-t, --process-timout <number>', 'How long to wait for a process to reload, in seconds', parseInt, 120)
+  .option('-t, --process-timeout <number>', 'How long to wait for a process to reload, in seconds')
   .helpOption('-h, --help', 'Display help for command')
   .parse(process.argv);
 
@@ -35,7 +36,13 @@ const APP_NAME = args.appName;
 const options: CliOptions = program.opts();
 const READY_MESSAGE = options.readyMessage;
 const FAIL_MESSAGES = options.failMessage;
-const PROCESS_TIMEOUT = options.processTimout * 1000; // Convert seconds to milliseconds
+const PROCESS_TIMEOUT = parseInt(options.processTimeout ?? '120') * 1000; // Convert seconds to milliseconds
+if (isNaN(PROCESS_TIMEOUT) || PROCESS_TIMEOUT <= 0) {
+  console.error(`Invalid process timeout: ${options.processTimeout}. Must be a positive number.`);
+  exit(-1);
+}
+console.log(`Options:`, options);
+console.log(`PROCESS_TIMEOUT:`, PROCESS_TIMEOUT);
 
 const logger = new Logger(options);
 
@@ -56,7 +63,7 @@ function pm2Restart(id: number): Promise<void> {
     let completed = false;
     const timer = setTimeout(() => {
       if (completed) return; // Already resolved
-      reject(new Error(`Timeout waiting for process ${id} to restart`));
+      reject(new Error(`Timeout waiting for process ${id} to restart after ${PROCESS_TIMEOUT}ms`));
     }, PROCESS_TIMEOUT);
 
     pm2.restart(id, (err) => {
@@ -83,27 +90,18 @@ function pm2LaunchBus(): Promise<any> {
   });
 }
 
-function waitForReadyOnBus(
-  bus: any,
-  pm_id: number,
-  readyMessage: string,
-  failMessages?: string[]
-): Promise<void> {
+function waitForReadyOnBus(bus: any, pm_id: number, readyMessage: string, failMessages?: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     let completed = false;
 
     const timer = setTimeout(() => {
       if (completed) return;
       cleanup();
-      reject(new Error(`Timeout waiting for ready message on pm_id ${pm_id}`));
+      reject(new Error(`Timeout waiting for ready message on pm_id ${pm_id} after ${PROCESS_TIMEOUT}ms`));
     }, PROCESS_TIMEOUT);
 
     const onLog = (packet: any) => {
-      if (
-        packet.process &&
-        packet.process.pm_id === pm_id &&
-        typeof packet.data === 'string'
-      ) {
+      if (packet.process && packet.process.pm_id === pm_id && typeof packet.data === 'string') {
         if (readyMessage && packet.data.includes(readyMessage)) {
           completed = true;
           cleanup();

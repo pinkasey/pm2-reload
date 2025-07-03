@@ -3,5 +3,5 @@ type CliOptions = {
   verbose: boolean;
   readyMessage?: string;
   failMessage?: string[];
-  processTimout: number;
+  processTimeout?: string;
 };
