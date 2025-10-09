@@ -31,7 +31,7 @@
   },
   "homepage": "https://github.com/pinkasey/pm2-reload#readme",
   "dependencies": {
-    "commander": "^14.0.0",
+    "commander": "^14.0.1",
     "pm2": "^6.x.x"
   },
   "devDependencies": {
